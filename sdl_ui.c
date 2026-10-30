@@ -27,6 +27,9 @@ static unsigned short stroke_width = 1;
 static unsigned short font_scale = 1;
 static unsigned int pixel_batch;
 static Uint32 last_present;
+static int vic2_screen;
+static Uint32 vic2_hash;
+static const unsigned char *glyph(unsigned char ch);
 static const SDL_Color default_palette[16] = {
 	{0, 0, 0, 255}, {255, 255, 255, 255},
 	{136, 0, 0, 255}, {170, 255, 238, 255},
@@ -99,11 +102,13 @@ static void
 poll_events(void)
 {
 	SDL_Event event;
+	int key_received = 0;
 
 	while (SDL_PollEvent(&event)) {
 		if (event.type == SDL_QUIT) {
 			quit_requested = 1;
 			pending_key = 27;
+			key_received = 1;
 		} else if (event.type == SDL_KEYDOWN && !event.key.repeat) {
 			SDL_Keycode key = event.key.keysym.sym;
 			if (key >= 32 && key <= 126)
@@ -114,13 +119,18 @@ poll_events(void)
 				pending_key = 27;
 			else
 				pending_key = 1;
+			key_received = 1;
 		} else if (event.type == SDL_MOUSEBUTTONDOWN) {
 			pending_key = 1;
+			key_received = 1;
 		}
 	}
 
-	if (pending_key != 0)
-		RAM[1024] = (unsigned char)pending_key;
+	if (key_received) {
+		RAM[SDL_RAM_KEY] = (unsigned char)pending_key;
+		if (RAM[SDL_RAM_MODE] != 0)
+			RAM[1024] = (unsigned char)pending_key;
+	}
 }
 
 static void
@@ -153,6 +163,8 @@ present(void)
 static void
 close_screen(void)
 {
+	int extension_mode = RAM[SDL_RAM_MODE] != 0;
+
 	if (dirty)
 		present();
 	if (texture != NULL)
@@ -170,8 +182,104 @@ close_screen(void)
 	screen_height = 0;
 	frame_open = 0;
 	dirty = 0;
-	RAM[1042] = 0;
+	if (extension_mode)
+		RAM[1042] = 0;
+	RAM[SDL_RAM_MODE] = 0;
+	vic2_screen = 0;
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);
+}
+
+static int
+open_screen(int width, int height, const char *title, int extension_mode)
+{
+	int window_width, window_height;
+	int i;
+	SDL_RendererFlags flags;
+
+	close_screen();
+	if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
+		return -1;
+	}
+	if (extension_mode) {
+		int base_width = width / extension_mode;
+		int base_height = height / extension_mode;
+
+		RAM[SDL_RAM_WIDTH] = (unsigned char)(base_width & 255);
+		RAM[SDL_RAM_WIDTH + 1] = (unsigned char)(base_width >> 8);
+		RAM[SDL_RAM_HEIGHT] = (unsigned char)(base_height & 255);
+		RAM[SDL_RAM_HEIGHT + 1] = (unsigned char)(base_height >> 8);
+		RAM[SDL_RAM_MODE] = (unsigned char)extension_mode;
+		RAM[1038] = (unsigned char)(base_width & 255);
+		RAM[1039] = (unsigned char)(base_width >> 8);
+		RAM[1040] = (unsigned char)(base_height & 255);
+		RAM[1041] = (unsigned char)(base_height >> 8);
+		RAM[1042] = (unsigned char)extension_mode;
+	} else {
+		RAM[SDL_RAM_MODE] = 0;
+	}
+	screen_width = width;
+	screen_height = height;
+	window_width = width < 960 ? width : 960;
+	window_height = height < 720 ? height : 720;
+
+	window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED,
+	    SDL_WINDOWPOS_CENTERED, window_width, window_height, SDL_WINDOW_SHOWN);
+	if (window == NULL) {
+		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
+		close_screen();
+		return -1;
+	}
+	flags = SDL_RENDERER_ACCELERATED;
+	renderer = SDL_CreateRenderer(window, -1, flags);
+	if (renderer == NULL)
+		renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+	if (renderer == NULL) {
+		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
+		close_screen();
+		return -1;
+	}
+	SDL_RenderSetLogicalSize(renderer, width, height);
+	texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+	    SDL_TEXTUREACCESS_STREAMING, width, height);
+	if (texture == NULL) {
+		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
+		close_screen();
+		return -1;
+	}
+	if (SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE) != 0) {
+		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
+		close_screen();
+		return -1;
+	}
+	pixels = (Uint32 *)calloc((size_t)width * height, sizeof(*pixels));
+	if (pixels == NULL) {
+		fprintf(stderr, "SCREEN: out of memory\n");
+		close_screen();
+		return -1;
+	}
+	pending_key = 0;
+	quit_requested = 0;
+	for (i = 0; i < width * height; i++)
+		pixels[i] = 0xFF000000u;
+	mark_dirty(0, 0, width, height);
+	stroke_width = 1;
+	font_scale = 1;
+	pixel_batch = 0;
+	last_present = SDL_GetTicks();
+	for (i = 0; i < 256; i++) {
+		if (i < sizeof(default_palette) / sizeof(default_palette[0]))
+			colors[i] = default_palette[i];
+		else {
+			colors[i].r = 0;
+			colors[i].g = 0;
+			colors[i].b = 0;
+			colors[i].a = 255;
+		}
+	}
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+	present();
+	return 0;
 }
 
 int
@@ -252,11 +360,6 @@ sdl_frame(const char *title, const char *message)
 int
 sdl_screen(unsigned short mode)
 {
-	int width, height;
-	int window_width, window_height;
-	int i;
-	SDL_RendererFlags flags;
-
 	if (mode == 0) {
 		close_screen();
 		return 0;
@@ -264,88 +367,9 @@ sdl_screen(unsigned short mode)
 	if (mode > 3)
 		return -1;
 
-	if (window != NULL && mode == RAM[1042])
+	if (window != NULL && mode == RAM[SDL_RAM_MODE])
 		return 0;
-	close_screen();
-	if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
-		return -1;
-	}
-
-	RAM[1038] = 0x20;
-	RAM[1039] = 0x03;
-	RAM[1040] = 0x90;
-	RAM[1041] = 0x01;
-	RAM[1042] = (unsigned char)mode;
-	width = 800 * mode;
-	height = 400 * mode;
-	screen_width = width;
-	screen_height = height;
-	window_width = width < 960 ? width : 960;
-	window_height = height < 720 ? height : 720;
-
-	window = SDL_CreateWindow("cbmbasic graphics",
-	    SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-	    window_width, window_height, SDL_WINDOW_SHOWN);
-	if (window == NULL) {
-		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
-		close_screen();
-		return -1;
-	}
-	flags = SDL_RENDERER_ACCELERATED;
-	renderer = SDL_CreateRenderer(window, -1, flags);
-	if (renderer == NULL)
-		renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-	if (renderer == NULL) {
-		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
-		close_screen();
-		return -1;
-	}
-	SDL_RenderSetLogicalSize(renderer, width, height);
-	texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-	    SDL_TEXTUREACCESS_STREAMING, width, height);
-	if (texture == NULL) {
-		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
-		close_screen();
-		return -1;
-	}
-	if (SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE) != 0) {
-		fprintf(stderr, "SCREEN: %s\n", SDL_GetError());
-		close_screen();
-		return -1;
-	}
-	pixels = (Uint32 *)calloc((size_t)width * height, sizeof(*pixels));
-	if (pixels == NULL) {
-		fprintf(stderr, "SCREEN: out of memory\n");
-		close_screen();
-		return -1;
-	}
-	pending_key = 0;
-	quit_requested = 0;
-	{
-		size_t pixel_count = (size_t)width * height;
-		size_t pixel;
-		for (pixel = 0; pixel < pixel_count; pixel++)
-			pixels[pixel] = 0xFF000000u;
-	}
-	mark_dirty(0, 0, width, height);
-	stroke_width = 1;
-	font_scale = 1;
-	pixel_batch = 0;
-	last_present = SDL_GetTicks();
-	for (i = 0; i < 256; i++) {
-		if (i < sizeof(default_palette) / sizeof(default_palette[0]))
-			colors[i] = default_palette[i];
-		else {
-			colors[i].r = 0;
-			colors[i].g = 0;
-			colors[i].b = 0;
-			colors[i].a = 255;
-		}
-	}
-	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-	present();
-	return 0;
+	return open_screen(800 * mode, 400 * mode, "cbmbasic graphics", mode);
 }
 
 int
@@ -699,6 +723,19 @@ glyph(unsigned char ch)
 		{0,4,4,4,4,4,4}, {0,0,4,0,0,4,0}, {0,10,10,0,0,0,0},
 		{0,10,31,10,31,10,0}, {0,4,15,20,14,5,30}
 	};
+	static const unsigned char extra[][7] = {
+		{4,4,2,0,0,0,0}, {10,31,10,10,31,10,0},
+		{17,2,4,8,17,0,0}, {12,18,20,8,21,18,13},
+		{2,4,8,8,8,4,2}, {8,4,2,2,2,4,8},
+		{0,0,21,14,31,14,21}, {0,4,4,31,4,4,0},
+		{0,0,0,31,0,0,0}, {2,4,8,16,8,4,2},
+		{8,4,2,1,2,4,8}, {14,8,8,8,8,8,14},
+		{14,2,2,2,2,2,14}, {0,0,0,0,0,0,31},
+		{4,10,17,0,0,0,0}, {14,17,23,21,23,16,14},
+		{16,8,4,2,1,0,0}, {8,4,2,0,0,0,0},
+		{2,4,8,8,8,4,2}, {8,4,2,2,2,4,8},
+		{0,13,18,0,0,0,0}
+	};
 	if (ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
 	if (ch >= '0' && ch <= '9') return digits[ch - '0'];
 	if (ch >= 'A' && ch <= 'Z') return letters[ch - 'A'];
@@ -714,8 +751,170 @@ glyph(unsigned char ch)
 	case '"': return punctuation[8];
 	case '$': return punctuation[9];
 	case '?': return punctuation[10];
+	case '\'': return extra[0];
+	case '#': return extra[1];
+	case '%': return extra[2];
+	case '&': return extra[3];
+	case '(': return extra[4];
+	case ')': return extra[5];
+	case '*': return extra[6];
+	case '+': return extra[7];
+	case '-': return extra[8];
+	case '<': return extra[9];
+	case '>': return extra[10];
+	case '[': return extra[11];
+	case ']': return extra[12];
+	case '_': return extra[13];
+	case '^': return extra[14];
+	case '@': return extra[15];
+	case '\\': return extra[16];
+	case '`': return extra[17];
+	case '{': return extra[18];
+	case '}': return extra[19];
+	case '~': return extra[20];
 	default: return blank;
 	}
+}
+
+static unsigned char
+vic_screen_code(unsigned char code)
+{
+	if (code >= 1 && code <= 26)
+		return (unsigned char)('A' + code - 1);
+	if (code >= 32 && code <= 126)
+		return code;
+	if (code == 0)
+		return '@';
+	return ' ';
+}
+
+static void
+vic_put_pixel(int x, int y, unsigned char color)
+{
+	SDL_Color c = default_palette[color & 15];
+	pixels[(size_t)y * screen_width + x] = 0xFF000000u |
+	    ((Uint32)c.r << 16) | ((Uint32)c.g << 8) | c.b;
+}
+
+static Uint32
+vic_hash_byte(Uint32 hash, unsigned char value)
+{
+	return (hash ^ value) * 16777619u;
+}
+
+void
+sdl_vic2_refresh(void)
+{
+	unsigned char d011, d016, d018;
+	unsigned int bank, screen_base, bitmap_base, char_base;
+	unsigned int row, column, x, y, cell, cell_address;
+	unsigned char code, fg, bg, bits;
+	const unsigned char *rows;
+	Uint32 hash = 2166136261u;
+	int bitmap, extended, custom_chars, reverse;
+
+	if (RAM[SDL_RAM_MODE] != 0)
+		return;
+	d011 = RAM[0xD011];
+	d016 = RAM[0xD016];
+	d018 = RAM[0xD018];
+	if (!vic2_screen) {
+		if (d011 == 0 && d018 == 0 && RAM[0xD020] == 0 &&
+		    RAM[0xD021] == 0 && RAM[0x0400] == 0)
+			return;
+		if (open_screen(320, 200, "cbmbasic VIC-II", 0) != 0)
+			return;
+		vic2_screen = 1;
+	}
+	if (d018 == 0)
+		d018 = 0x14;
+
+	/* Zero-filled RAM represents the usual bank-zero startup configuration. */
+	bank = RAM[0xDD00] == 0 ? 0 :
+	    ((~RAM[0xDD00]) & 3u) * 0x4000u;
+	screen_base = ((d018 & 0xF0u) >> 4) * 0x400u;
+	bitmap_base = (d018 & 0x08u) ? 0x2000u : 0;
+	char_base = (d018 & 0x0Eu) << 10;
+	bitmap = (d011 & 0x20u) != 0;
+	extended = (d011 & 0x40u) != 0 && !bitmap;
+	custom_chars = !(bank == 0 &&
+	    (char_base == 0x1000u || char_base == 0x1800u));
+
+	hash = vic_hash_byte(hash, d011);
+	hash = vic_hash_byte(hash, d016);
+	hash = vic_hash_byte(hash, d018);
+	for (row = 0; row < 5; row++)
+		hash = vic_hash_byte(hash, RAM[0xD020 + row]);
+	for (cell = 0; cell < 1000; cell++) {
+		hash = vic_hash_byte(hash,
+		    RAM[bank + screen_base + cell]);
+		if (bitmap)
+			continue;
+		hash = vic_hash_byte(hash, RAM[0xD800 + cell]);
+	}
+	if (bitmap) {
+		for (cell = 0; cell < 8000; cell++)
+			hash = vic_hash_byte(hash,
+			    RAM[bank + bitmap_base + cell]);
+	} else if (custom_chars) {
+		for (cell = 0; cell < 2048; cell++)
+			hash = vic_hash_byte(hash,
+			    RAM[bank + char_base + cell]);
+	}
+	if (hash == vic2_hash)
+		return;
+	vic2_hash = hash;
+
+	bg = RAM[0xD021] & 15;
+	for (row = 0; row < 25; row++) {
+		for (column = 0; column < 40; column++) {
+			cell = row * 40 + column;
+			cell_address = bank + screen_base + cell;
+			code = RAM[cell_address];
+			if (bitmap) {
+				unsigned char colors_byte = RAM[cell_address];
+				for (y = 0; y < 8; y++) {
+					bits = RAM[bank + bitmap_base +
+					    (row * 40 + column) * 8 + y];
+					for (x = 0; x < 8; x++)
+						vic_put_pixel(column * 8 + x,
+						    row * 8 + y,
+						    (bits & (0x80u >> x)) ?
+						    (colors_byte & 15) :
+						    (colors_byte >> 4));
+				}
+				continue;
+			}
+			if (extended) {
+				bg = RAM[0xD021 + (code >> 6)];
+				code &= 0x3F;
+				reverse = 0;
+			} else {
+				reverse = (code & 0x80u) != 0;
+				code &= 0x7F;
+			}
+			fg = RAM[0xD800 + cell] & 15;
+			for (y = 0; y < 8; y++) {
+				if (custom_chars) {
+					bits = RAM[bank + char_base +
+					    (unsigned int)code * 8 + y];
+				} else {
+					rows = glyph(vic_screen_code(code));
+					bits = y == 0 || y == 7 ? 0 :
+					    (unsigned char)(rows[y - 1] << 2);
+				}
+				for (x = 0; x < 8; x++) {
+					int set = (bits & (0x80u >> x)) != 0;
+					if (reverse)
+						set = !set;
+					vic_put_pixel(column * 8 + x, row * 8 + y,
+					    set ? fg : bg);
+				}
+			}
+		}
+	}
+	mark_dirty(0, 0, 320, 200);
+	present();
 }
 
 int
@@ -808,7 +1007,9 @@ sdl_get_key(void)
 	{
 		int key = pending_key;
 		pending_key = 0;
-		RAM[1024] = 0;
+		RAM[SDL_RAM_KEY] = 0;
+		if (RAM[SDL_RAM_MODE] != 0)
+			RAM[1024] = 0;
 		return key;
 	}
 }
@@ -879,6 +1080,7 @@ void sdl_font(const char *name, unsigned short size)
 { (void)name; (void)size; }
 void sdl_alert(unsigned short sound) { (void)sound; putchar('\a'); }
 int sdl_poll_events(void) { return 0; }
+void sdl_vic2_refresh(void) {}
 void sdl_begin_frame(void) {}
 void sdl_end_frame(void) {}
 void sdl_present(void) {}

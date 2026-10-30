@@ -37,9 +37,27 @@ statements `SCREEN`, `CLS`, `TITLE`, `CSET`, `RECT x1,y1,x2,y2,color`,
 `ENDFRAME`, `ANTIALIAS`, `LSET`, `FSET`, `LINE`, `CIRCLE`, `ELLIPSE`, `ARC`,
 `TRIANGLE`, `GPRINT`, `ALERT`, and `SLEEP`. `SCREEN 1` through `SCREEN 3`
 open a pixel canvas; `SCREEN 0` closes it. Logical canvas sizes are 800x400
-times the selected mode. `PEEK(1038)`/`PEEK(1040)` report the base dimensions,
-`PEEK(1042)` the selected mode, and `PEEK(1024)` the latest key or mouse event.
-Run `test/graphics.bas` as a smoke test.
+times the selected mode. The legacy HandBASIC interface remains available:
+the 16-bit width is at `1038`/`1039`, height at `1040`/`1041`, selected mode
+at `1042`, and latest key or mouse event at `1024`. Matching aliases are
+available at `49152`-`49157` without overlapping C64 screen RAM.
+`SCREEN 0` closes the extension canvas.
+
+The SDL build also renders common VIC-II memory configurations written through
+`POKE`: 40x25 text, 320x200 two-color bitmap, and extended-color text. It reads
+screen RAM at `$0400`, color RAM at `$D800`, and VIC-II registers at `$D000`.
+For bitmap mode, set `$D011` bit 5 and use `$D018` to select screen and bitmap
+bases; for extended-color text, set `$D011` bit 6. If `$D018` is left zero, the
+renderer uses the standard `$14` screen/character layout. With no explicit
+CIA2 bank selection, it uses VIC bank zero. `test/vic2-graphics.bas` exercises
+the supported modes.
+
+Run `test/graphics.bas` as an extension graphics smoke test.
+
+The Raku `basic-transpile.raku` utility translates HandBASIC graphics programs
+to C64/VICE bitmap graphics and passes VIC-II memory programs back to HandBASIC.
+See [BASIC_TRANSPILER.md](BASIC_TRANSPILER.md) for supported operations and
+graphics limitations.
 
 Install SDL2 development files and `pkg-config` first (on Ubuntu/Debian:
 `sudo apt install libsdl2-dev pkg-config`), then build with

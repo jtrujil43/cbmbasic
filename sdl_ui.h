@@ -1,6 +1,11 @@
 #ifndef SDL_UI_H_INCLUDED
 #define SDL_UI_H_INCLUDED
 
+#define SDL_RAM_WIDTH 0xC000
+#define SDL_RAM_HEIGHT 0xC002
+#define SDL_RAM_MODE 0xC004
+#define SDL_RAM_KEY 0xC005
+
 int sdl_beep(unsigned short frequency, unsigned short duration);
 int sdl_frame(const char *title, const char *message);
 int sdl_frame_rect(unsigned short x1, unsigned short y1, unsigned short x2,
@@ -31,6 +36,7 @@ void sdl_line_width(unsigned short width);
 void sdl_font(const char *name, unsigned short size);
 void sdl_alert(unsigned short sound);
 int sdl_poll_events(void);
+void sdl_vic2_refresh(void);
 void sdl_begin_frame(void);
 void sdl_end_frame(void);
 void sdl_present(void);

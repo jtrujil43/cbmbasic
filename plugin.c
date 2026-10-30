@@ -209,9 +209,12 @@ plugin_qplop() {
  */
 unsigned short
 plugin_gone() {
-	if ((++sdl_event_counter & 63) == 0 && sdl_poll_events()) {
-		sdl_screen(0);
-		exit(0);
+	if ((++sdl_event_counter & 63) == 0) {
+		sdl_vic2_refresh();
+		if (sdl_poll_events()) {
+			sdl_screen(0);
+			exit(0);
+		}
 	}
 	set_chrptr(get_chrptr()+1);
 	for (;;) {

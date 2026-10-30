@@ -154,6 +154,10 @@ init_os(int argc, char **argv) {
 		return PC;
 
 	if (argc>1) {
+		if (strcmp(argv[1], "--version") == 0) {
+			printf("cbmbasic (built %s %s)\n", __DATE__, __TIME__);
+			exit(0);
+		}
 		interactive = 0;
 		input_file = fopen(argv[1], "r");
 		if (!input_file) {

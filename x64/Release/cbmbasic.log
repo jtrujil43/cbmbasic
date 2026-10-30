@@ -1,0 +1,17 @@
+﻿  cbmbasic.c
+cbmbasic.c(6385): warning C4116: unnamed type definition in parentheses
+cbmbasic.c(6386): warning C4116: unnamed type definition in parentheses
+cbmbasic.c(6410): warning C4116: unnamed type definition in parentheses
+  console.c
+  plugin.c
+  readdir.c
+  runtime.c
+runtime.c(582): warning C4267: '+=': conversion from 'size_t' to 'unsigned short', possible loss of data
+runtime.c(620): warning C4267: '+=': conversion from 'size_t' to 'unsigned short', possible loss of data
+runtime.c(622): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+runtime.c(671): warning C4267: '=': conversion from 'size_t' to 'unsigned short', possible loss of data
+  Generating code
+  All 63 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  cbmbasic.vcxproj -> C:\Users\jovan\Dropbox (ASU)\Copy\devel\cbmbasic\x64\Release\cbmbasic.exe
+  cbmbasic.vcxproj -> C:\Users\jovan\Dropbox (ASU)\Copy\devel\cbmbasic\x64\Release\cbmbasic.pdb (Full PDB)
