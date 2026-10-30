@@ -1,0 +1,18 @@
+﻿cbmbasic SDL2 builds
+
+Windows-11-x64
+  cbmbasic.exe: x64 build using MSVC 2026
+  SDL2.dll: SDL 2.0.9 x64; keep beside cbmbasic.exe
+
+Windows-XP-x86
+  cbmbasic.exe: i686 build using MinGW-w64 GCC 8.1.0
+  Target subsystem: Windows 5.01; MSVCRT runtime
+  SDL2.dll: SDL 2.0.9 x86; keep beside cbmbasic.exe
+
+Both builds passed a BASIC print-and-BEEP smoke test on Windows 11 x64.
+The x86 PE headers and imports were checked for the XP target, but this
+binary was not run on an actual Windows XP system in this environment.
+
+The SDL2 development archives and the x86 compiler archive are in
+' dependencies '. Run cbmbasic.exe with a BASIC program path, for example:
+  cbmbasic.exe graphics.bas
